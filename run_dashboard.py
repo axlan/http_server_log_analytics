@@ -8,10 +8,13 @@ import dash_bootstrap_components as dbc
 import plotly.express as px
 import pandas as pd
 
+TABLE_ROWS = 20
+
 df = pd.read_csv('out/combined_logs.csv', parse_dates=['times'])
 
 df['category'] = 'user'
-df.loc[(df['c-device'] == 'Other') & (df['c-os'] == 'Other') & (df['c-os'] == 'Other'), 'category'] = 'bot'
+df.loc[(df['c-device'] == 'Other') & (df['c-os'] == 'Other')
+       & (df['c-os'] == 'Other'), 'category'] = 'bot'
 df.loc[df['c-device'] == 'Spider', 'category'] = 'bot'
 
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.FLATLY])
@@ -31,13 +34,15 @@ app.layout = dbc.Container([
         value=durations[-1]['value'],
         clearable=False
     ),
-    dcc.RadioItems(id='data_type',options=['Requests', 'Unique Visitors'], value= 'Requests'),
+    dcc.RadioItems(id='data_type', options=[
+                   'Requests', 'Unique Visitors'], value='Requests'),
     html.Br(),
     html.H1('Graphs'),
     dcc.Graph(id="request_graph"),
     dash_table.DataTable(
         id='visit_table',
-        columns=[{"name": i, "id": i, 'presentation': 'markdown'} for i in ['Page', 'Visits']],
+        columns=[{"name": i, "id": i, 'presentation': 'markdown'}
+                 for i in ['Page', 'Human Visits', 'Bot Visits']],
         sort_action="native",
         data=None,
     ),
@@ -47,7 +52,7 @@ app.layout = dbc.Container([
 @app.callback(
     Output("request_graph", "figure"),
     [Input("dropdown_duration", "value"),
-    Input("data_type", "value")])
+     Input("data_type", "value")])
 def update_request_graph(selected_days, data_type):
     if selected_days != 0:
         cutoff_date = df["times"].iloc[-1] - pd.Timedelta(days=selected_days)
@@ -56,7 +61,7 @@ def update_request_graph(selected_days, data_type):
         data = df
 
     gp = data.groupby([data['times'].dt.date, 'category'])
-    
+
     if data_type == 'Requests':
         counts = gp['c-ip'].count()
     else:
@@ -64,14 +69,15 @@ def update_request_graph(selected_days, data_type):
 
     counts = counts.reset_index(level=[1])
 
-    fig = px.scatter(x=counts.index, y=counts['c-ip'], color=counts['category'])
+    fig = px.scatter(
+        x=counts.index, y=counts['c-ip'], color=counts['category'])
     return fig
 
 
 @app.callback(
     Output("visit_table", "data"),
     [Input("dropdown_duration", "value"),
-    Input("data_type", "value")])
+     Input("data_type", "value")])
 def update_visit_table(selected_days, data_type):
     if selected_days != 0:
         cutoff_date = df["times"].iloc[-1] - pd.Timedelta(days=selected_days)
@@ -80,17 +86,34 @@ def update_visit_table(selected_days, data_type):
         data = df
 
     data = data[data['cs-uri-stem'].str.endswith('/')]
-    gp = data.groupby(['cs-uri-stem'])
-    
+    gp = data.groupby(['cs-uri-stem', 'category'])
+
     if data_type == 'Requests':
         counts = gp['c-ip'].count()
     else:
         counts = gp['c-ip'].nunique()
 
+    # counts = counts.reset_index().sort_values('c-ip', ascending=False).head(TABLE_ROWS)
 
-    counts = counts.reset_index().sort_values('c-ip', ascending=False).head(20)
+    # table_data = []
 
-    dict_data = [{'Page':f"[{v['cs-uri-stem']}](https://www.robopenguins.com{v['cs-uri-stem']})",'Visits':v['c-ip']} for _, v in counts.iterrows()]
+    # dict_data = [{'Page':f"[{v['cs-uri-stem']}](https://www.robopenguins.com{v['cs-uri-stem']})",'Visits':v['c-ip']} for _, v in counts.iterrows()]
+
+    counts = counts.reset_index([1]).sort_values('c-ip', ascending=False)
+
+    idx_bot = counts['category'] == 'bot'
+    idx_not_bot = counts['category'] != 'bot'
+
+    cat_counts = counts[idx_not_bot].copy()
+
+    cat_counts['Bot Visits'] = counts[idx_bot]['c-ip']
+
+    cat_counts.dropna(inplace=True)
+    cat_counts['Bot Visits'] = cat_counts['Bot Visits'].astype(int)
+    cat_counts = cat_counts.head(20)
+
+    dict_data = [{'Page': f"[{i}](https://www.robopenguins.com{i})",
+                  'Human Visits': v['c-ip'], 'Bot Visits': v['Bot Visits']} for i, v in cat_counts.iterrows()]
 
     return dict_data
 
