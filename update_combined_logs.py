@@ -14,6 +14,7 @@ OUT_FILE = 'combined_logs.csv'
 LAST_FILE = 'last_entry.txt'
 RESERVED_FILES = ['.gitignore', OUT_FILE, LAST_FILE]
 
+
 def load_files(files_to_load: List[str]) -> pd.DataFrame:
     START_STR = "#Version:"
     df = None
@@ -36,7 +37,7 @@ def load_files(files_to_load: List[str]) -> pd.DataFrame:
             if df is None:
                 df = file_df
             else:
-                df = pd.concat([df, file_df])    
+                df = pd.concat([df, file_df])
 
         except Exception as e:
             print(f"Couldn't open file: {file_path}. {str(e)}")
@@ -51,7 +52,7 @@ def extract_analytic_data(df: pd.DataFrame) -> pd.DataFrame:
     device_data = []
     os_data = []
     agent_data = []
-    
+
     for ua_string in df['cs(User-Agent)']:
         ua_string = urllib.parse.unquote(ua_string)
         ua_data = user_agent_parser.Parse(ua_string)
@@ -67,15 +68,17 @@ def extract_analytic_data(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def filter_bots(df: pd.DataFrame) -> pd.DataFrame:
-    df = df[(df['c-device'] != 'Other') | (df['c-os'] != 'Other') | (df['c-os'] != 'Other')]
+    df = df[(df['c-device'] != 'Other') |
+            (df['c-os'] != 'Other') | (df['c-os'] != 'Other')]
     df = df[df['c-device'] != 'Spider']
     return df
-    
+
 
 def main():
     path_arg = sys.argv[1]
 
-    files_to_load = sorted(f for f in os.listdir(path_arg) if f not in RESERVED_FILES)
+    files_to_load = [f for f in os.listdir(
+        path_arg) if f not in RESERVED_FILES]
     num_files_in_dir = len(files_to_load)
 
     print(f'{num_files_in_dir} logs in directory.')
@@ -83,6 +86,17 @@ def main():
     last_file_path = os.path.join(path_arg, LAST_FILE)
     out_file_path = os.path.join(path_arg, OUT_FILE)
     append_results = False
+
+    # This works if files creation is always alphabetical order. This didn't work for CloudFront logs since the
+    # hash at the end of the file violates this.
+    # files_to_load.sort()
+
+    # This may have issues if the system time is changed, or the files are modified later.
+    files_with_times = [tuple([f, os.path.getmtime(
+        os.path.join(path_arg, f))]) for f in files_to_load]
+    files_with_times = sorted(files_with_times, key=lambda x: x[1])
+    files_to_load = [f for f, _ in files_with_times]
+
     if os.path.exists(last_file_path) and os.path.exists(out_file_path):
         append_results = True
         with open(last_file_path, 'r') as fd:
@@ -107,10 +121,11 @@ def main():
 
     mode = 'a' if append_results else 'w'
     with open(out_file_path, mode, newline='\n', encoding='utf-8') as fd:
-        df.to_csv(fd, index=False)
+        df.to_csv(fd, index=False, header=not append_results)
 
     with open(last_file_path, 'w') as fd:
         fd.write(last_file)
+
 
 if __name__ == '__main__':
     main()

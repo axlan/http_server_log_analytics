@@ -1,5 +1,5 @@
-from dateutil import parser
-from collections import defaultdict
+import webbrowser
+from threading import Timer
 
 import dash
 from dash import dcc, html, dash_table
@@ -27,17 +27,33 @@ durations = [{'label': l, 'value': v}
 durations.append({'label': 'All', 'value': 0})
 
 app.layout = dbc.Container([
-    dbc.Label('Days History to Show'),
-    dcc.Dropdown(
-        id="dropdown_duration",
-        options=durations,
-        value=durations[-1]['value'],
-        clearable=False
+    dbc.Row(
+        [
+            dbc.Label('Days History to Show',  width=2),
+            dbc.Col(
+                dcc.Dropdown(
+                    id="dropdown_duration",
+                    options=durations,
+                    value=durations[-1]['value'],
+                    clearable=False
+                ),
+                width=10,
+            ),
+        ],
+        className="mb-3",
     ),
-    dcc.RadioItems(id='data_type', options=[
-                   'Requests', 'Unique Visitors'], value='Requests'),
+    dbc.Row(
+        [
+            dbc.Label('Which Data to Display',  width=2),
+            dbc.Col(
+                dbc.RadioItems(id='data_type', options=[{'label': v, 'value': v}
+                                                        for v in ['Requests', 'Unique Visitors']], value='Requests'),
+                width=10,
+            ),
+        ],
+        className="mb-3",
+    ),
     html.Br(),
-    html.H1('Graphs'),
     dcc.Graph(id="request_graph"),
     dash_table.DataTable(
         id='visit_table',
@@ -70,7 +86,12 @@ def update_request_graph(selected_days, data_type):
     counts = counts.reset_index(level=[1])
 
     fig = px.scatter(
-        x=counts.index, y=counts['c-ip'], color=counts['category'])
+        x=counts.index, y=counts['c-ip'], color=counts['category'], labels={
+            "x": "Date",
+            "y": f"{data_type}/day"
+        },
+        title=f"{data_type} Trends")
+
     return fig
 
 
@@ -93,12 +114,6 @@ def update_visit_table(selected_days, data_type):
     else:
         counts = gp['c-ip'].nunique()
 
-    # counts = counts.reset_index().sort_values('c-ip', ascending=False).head(TABLE_ROWS)
-
-    # table_data = []
-
-    # dict_data = [{'Page':f"[{v['cs-uri-stem']}](https://www.robopenguins.com{v['cs-uri-stem']})",'Visits':v['c-ip']} for _, v in counts.iterrows()]
-
     counts = counts.reset_index([1]).sort_values('c-ip', ascending=False)
 
     idx_bot = counts['category'] == 'bot'
@@ -118,5 +133,10 @@ def update_visit_table(selected_days, data_type):
     return dict_data
 
 
-if __name__ == "__main__":
+def open_browser():
+    webbrowser.open_new("http://localhost:{}".format(8282))
+
+
+if __name__ == '__main__':
+    Timer(1, open_browser).start()
     app.run_server(host='0.0.0.0', port=8282, debug=True)
