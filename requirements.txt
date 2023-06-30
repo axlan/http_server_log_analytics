@@ -2,3 +2,4 @@ ua-parser
 pandas
 dash
 dash-bootstrap-components
+pyarrow
