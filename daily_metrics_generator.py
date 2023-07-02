@@ -1,32 +1,27 @@
-from functools import reduce
-
-from multiprocessing import Pool, Queue
-
-from dataclasses import dataclass
-
-from collections import defaultdict
-
-# To get logs from s3 use aws-cli:
-#   aws s3 sync s3://$BUCKET_NAME/ out/
-import gzip
-import sys
-import io
+import argparse
 import os
-from typing import List, Optional, Dict
+import sys
 import urllib.parse
+from collections import defaultdict
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from functools import reduce
+from multiprocessing import Pool, Queue
+from typing import Dict, List, Optional
 
+import boto3
 import pandas as pd
 from ua_parser import user_agent_parser
 
-from datetime import datetime
+from extended_log import load_extended_log_files, load_extended_log_s3, s3_url_to_parts
 
 OUT_FILE = "daily_metrics.feather"
-
-PREFIX = "E3SR3H7C34DQ6Z."
 
 MAX_LINE_LEN = 1024
 
 NUM_THREADS = 8
+
+FALLBACK_START_DATE = datetime(year=2023, month=1, day=1)
 
 
 @dataclass
@@ -51,7 +46,7 @@ def process_func(files: str):
             days_files.append(file)
             continue
 
-        df = load_files(days_files)
+        df = load_extended_log_files(days_files)
         # Pandas only infers correct type for datetime.datetime (not datetime.date)
         current_datetime = datetime(
             current_date.year, current_date.month, current_date.day
@@ -64,40 +59,26 @@ def process_func(files: str):
     return metrics
 
 
+def process_s3_func(args, start_date: datetime.date):
+    date = start_date
+    metrics = []
+    while date < datetime.now().date():
+        prefix = args.prefix + date.strftime("%Y-%m-%d")
+        print(f'Processing {date.strftime("%Y-%m-%d")}')
+        df = load_extended_log_s3(args.s3_logs, prefix)
+        if df is None:
+            break
+        # Pandas only infers correct type for datetime.datetime (not datetime.date)
+        current_datetime = datetime(date.year, date.month, date.day)
+        metrics += extract_analytic_data(current_datetime, df).values()
+        date += timedelta(days=NUM_THREADS)
+
+    return metrics
+
+
 def get_date(file: str) -> datetime.date:
     parts = file.split(".")
     return datetime.strptime(parts[1], "%Y-%m-%d-%H").date()
-
-
-def load_files(files_to_load: List[str]) -> pd.DataFrame:
-    START_STR = "#Version:"
-    df = None
-
-    for file_path in files_to_load:
-        try:
-            with open(file_path, "rb") as test_fd:
-                peek_data = test_fd.peek(len(START_STR))
-                if peek_data.decode("ascii", errors="ignore").startswith("#Version:"):
-                    file_fd = open(file_path, "r")
-                else:
-                    data = gzip.decompress(test_fd.read())
-                    file_fd = io.StringIO(data.decode("ascii"))
-
-            # Skip version line
-            file_fd.readline()
-            # Read column header
-            names = file_fd.readline().split(" ")[1:]
-            file_df = pd.read_csv(file_fd, names=names, delimiter="\t")
-            if df is None:
-                df = file_df
-            else:
-                df = pd.concat([df, file_df])
-
-        except Exception as e:
-            print(f"Couldn't open file: {file_path}. {str(e)}")
-            continue
-
-    return df
 
 
 def extract_analytic_data(
@@ -144,22 +125,117 @@ def is_bot(c_device, c_os, c_agent) -> bool:
 
 
 def main():
-    path_arg = sys.argv[1]
-    out_path = os.path.join(path_arg, OUT_FILE)
+    parser = argparse.ArgumentParser()
+    ex_group = parser.add_mutually_exclusive_group()
+    ex_group.add_argument(
+        "--local-logs", help="Local directory containing webserver extended logs."
+    )
+    ex_group.add_argument(
+        "--s3-logs", help="S3 bucket containing webserver extended logs."
+    )
+    parser.add_argument(
+        "--prefix",
+        help="S3 or local file prefix for the logs up to the year in the filename.",
+    )
+    parser.add_argument(
+        "--cache",
+        default="out/daily_metrics.feather",
+        help="S3 or local path to cache (daily_metrics.feather) file. S3 paths must start with s3://",
+    )
+    parser.add_argument(
+        "--out-dir", default="out/", help="Directory to write output to."
+    )
+
+    args = parser.parse_args()
+    if args.local_logs:
+        local_generator(args)
+    else:
+        s3_generator(args)
+
+
+def get_cache_df(cache_location):
+    cache_df = None
+    cache_bucket, cache_key = s3_url_to_parts(cache_location)
+    if cache_key:
+        s3_client = boto3.client("s3")
+        response = s3_client.get_object(Bucket=cache_bucket, Key=cache_key)
+        cache_df = pd.read_feather(response["Body"])
+    elif os.path.exists(cache_location):
+        cache_df = pd.read_feather(cache_location)
+
+    return cache_df
+
+def s3_generator(args):
+    last_date = FALLBACK_START_DATE
+
+    old_df = get_cache_df(args.cache)
+
+    if old_df is not None:
+        old_df.info()
+        last_date = old_df["date"].max().date()
+
+    start_date = last_date + timedelta(days=1)
+    print(f'Loading logs from {start_date} to {datetime.now().date()}')
+
+    params = [(args, start_date + timedelta(days=i)) for i in range(NUM_THREADS)]
+
+    with Pool(NUM_THREADS) as p:
+        metrics = p.starmap(process_s3_func, params)
+
+    save_metrics(old_df, metrics, args)
+
+
+def save_metrics(old_df, metrics, args):
+    out_path = os.path.join(args.out_dir, OUT_FILE) 
+    metrics = reduce(lambda x, y: x + y, metrics, [])
+    if len(metrics) == 0:
+        print('No logs found.')
+        return
+    metrics = sorted(metrics, key=lambda v: v.date)
+
+    df = pd.DataFrame(metrics)
+    df["date"] = df["date"].astype("datetime64[D]")
+    df["human_total_requests"] = df["human_total_requests"].astype("uint16")
+    df["human_unique_requests"] = df["human_unique_requests"].astype("uint16")
+    df["bot_total_requests"] = df["bot_total_requests"].astype("uint16")
+    df["bot_unique_requests"] = df["bot_unique_requests"].astype("uint16")
+
+    print(f"{len(df)} new metrics")
+
+    if old_df is not None:
+        df = pd.concat([old_df, df])
+    df["page"] = df["page"].astype("category")
+
+    size_all = len(df)
+
+    last_day = df["date"].max()
+    df = df[df["date"] != last_day]
+    df.reset_index(drop=True, inplace=True)
+
+    print(f"Dropping {size_all - len(df)} results for current day")
+
+    df.info()
+
+    # df.to_csv(OUT_FILE,  index=False)
+    df.to_feather(out_path)
+
+
+def local_generator(args):
+    path_arg = args.local_logs
 
     files = []
     for f in os.listdir(path_arg):
-        if f.startswith(PREFIX):
+        if f.startswith(args.prefix):
             files.append(f)
     files = sorted(files)
 
     print(f"{len(files)} total files")
 
-    old_df = None
     last_date = None
 
-    if os.path.exists(out_path):
-        old_df = pd.read_feather(out_path)
+    old_df = get_cache_df(args.cache)
+
+    if old_df is not None:
         old_df.info()
         last_date = old_df["date"].max().date()
 
@@ -188,32 +264,8 @@ def main():
 
     with Pool(NUM_THREADS) as p:
         metrics = p.map(process_func, file_allocations)
-    metrics = reduce(lambda x, y: x + y, metrics, [])
-    metrics = sorted(metrics, key=lambda v: v.date)
 
-    df = pd.DataFrame(metrics)
-    df["date"] = df["date"].astype("datetime64[D]")
-    df["human_total_requests"] = df["human_total_requests"].astype("uint16")
-    df["human_unique_requests"] = df["human_unique_requests"].astype("uint16")
-    df["bot_total_requests"] = df["bot_total_requests"].astype("uint16")
-    df["bot_unique_requests"] = df["bot_unique_requests"].astype("uint16")
-
-    if old_df is not None:
-        df = pd.concat([old_df, df])
-    df["page"] = df["page"].astype("category")
-
-    size_all = len(df)
-
-    last_day = df["date"].max()
-    df = df[df["date"] != last_day]
-    df.reset_index(inplace=True)
-
-    print(f"Dropping {size_all - len(df)} results for current day")
-
-    df.info()
-
-    # df.to_csv(OUT_FILE,  index=False)
-    df.to_feather(out_path)
+    save_metrics(old_df, metrics, args)
 
 
 if __name__ == "__main__":

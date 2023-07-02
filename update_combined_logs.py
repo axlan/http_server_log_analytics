@@ -10,40 +10,11 @@ import urllib.parse
 import pandas as pd
 from ua_parser import user_agent_parser
 
+from extended_log import load_extended_log_files
+
 OUT_FILE = 'combined_logs.csv'
 LAST_FILE = 'last_entry.txt'
 RESERVED_FILES = ['.gitignore', OUT_FILE, LAST_FILE]
-
-
-def load_files(files_to_load: List[str]) -> pd.DataFrame:
-    START_STR = "#Version:"
-    df = None
-
-    for file_path in files_to_load:
-        try:
-            with open(file_path, 'rb') as test_fd:
-                peek_data = test_fd.peek(len(START_STR))
-                if peek_data.decode('ascii', errors="ignore").startswith("#Version:"):
-                    file_fd = open(file_path, 'r')
-                else:
-                    data = gzip.decompress(test_fd.read())
-                    file_fd = io.StringIO(data.decode('ascii'))
-
-            # Skip version line
-            file_fd.readline()
-            # Read column header
-            names = file_fd.readline().split(' ')[1:]
-            file_df = pd.read_csv(file_fd, names=names, delimiter='\t')
-            if df is None:
-                df = file_df
-            else:
-                df = pd.concat([df, file_df])
-
-        except Exception as e:
-            print(f"Couldn't open file: {file_path}. {str(e)}")
-            continue
-
-    return df
 
 
 def extract_analytic_data(df: pd.DataFrame) -> pd.DataFrame:
@@ -116,7 +87,7 @@ def main():
     last_file = files_to_load[-1]
     paths_to_load = [os.path.join(path_arg, f) for f in files_to_load]
 
-    df = load_files(paths_to_load)
+    df = load_extended_log_files(paths_to_load)
     df = extract_analytic_data(df)
 
     mode = 'a' if append_results else 'w'
