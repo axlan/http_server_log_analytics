@@ -1,6 +1,6 @@
 import argparse
 import os
-import sys
+import io
 import urllib.parse
 from collections import defaultdict
 from dataclasses import dataclass
@@ -157,10 +157,13 @@ def get_cache_df(cache_location):
     cache_df = None
     cache_bucket, cache_key = s3_url_to_parts(cache_location)
     if cache_key:
+        print("Loaded cache from S3")
         s3_client = boto3.client("s3")
         response = s3_client.get_object(Bucket=cache_bucket, Key=cache_key)
-        cache_df = pd.read_feather(response["Body"])
+        stream = io.BytesIO(response["Body"].read())
+        cache_df = pd.read_feather(stream)
     elif os.path.exists(cache_location):
+        print("Loaded cache from File")
         cache_df = pd.read_feather(cache_location)
 
     return cache_df
@@ -218,6 +221,12 @@ def save_metrics(old_df, metrics, args):
 
     # df.to_csv(OUT_FILE,  index=False)
     df.to_feather(out_path)
+
+    cache_bucket, cache_key = s3_url_to_parts(args.cache)
+    if cache_key:
+        print("Uploading cache file to S3")
+        s3 = boto3.resource('s3')
+        s3.Bucket(cache_bucket).upload_file(out_path, cache_key)
 
 
 def local_generator(args):
