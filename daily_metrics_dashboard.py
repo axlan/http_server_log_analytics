@@ -111,7 +111,7 @@ def update_visit_table(selected_days, data_type):
 
     key_type = '_total_requests' if data_type == 'Requests' else '_unique_requests'
 
-    gp = gp.sum().sort_values('human' + key_type, ascending=False).head(20)
+    gp = gp.sum(numeric_only=True).sort_values('human' + key_type, ascending=False).head(20)
 
     dict_data = [{'Page': f"[{i}](https://www.robopenguins.com{i})",
                   'Human Visits': v['human' + key_type], 'Bot Visits': v['bot' + key_type]} for i, v in gp.iterrows()]
