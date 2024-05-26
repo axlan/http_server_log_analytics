@@ -66,11 +66,10 @@ def process_s3_func(args, start_date: datetime.date):
         prefix = args.prefix + date.strftime("%Y-%m-%d")
         print(f'Processing {date.strftime("%Y-%m-%d")}')
         df = load_extended_log_s3(args.s3_logs, prefix)
-        if df is None:
-            break
-        # Pandas only infers correct type for datetime.datetime (not datetime.date)
-        current_datetime = datetime(date.year, date.month, date.day)
-        metrics += extract_analytic_data(current_datetime, df).values()
+        if df is not None:
+            # Pandas only infers correct type for datetime.datetime (not datetime.date)
+            current_datetime = datetime(date.year, date.month, date.day)
+            metrics += extract_analytic_data(current_datetime, df).values()
         date += timedelta(days=NUM_THREADS)
 
     return metrics
@@ -197,7 +196,7 @@ def save_metrics(old_df, metrics, args):
     metrics = sorted(metrics, key=lambda v: v.date)
 
     df = pd.DataFrame(metrics)
-    df["date"] = df["date"].astype("datetime64[D]")
+    df["date"] = pd.to_datetime(df["date"])
     df["human_total_requests"] = df["human_total_requests"].astype("uint16")
     df["human_unique_requests"] = df["human_unique_requests"].astype("uint16")
     df["bot_total_requests"] = df["bot_total_requests"].astype("uint16")

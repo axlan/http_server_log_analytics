@@ -1,6 +1,6 @@
 ua-parser
-pandas==1.5.3
+pandas==2.2.2
 dash
 dash-bootstrap-components
-pyarrow==12.0.1
+pyarrow==16.1.0
 boto3
