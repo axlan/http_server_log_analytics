@@ -19,7 +19,7 @@ Files could be added from a different source instead of AWS as well.
 
 After about a year, the scaling of running this processing was starting to unmanageable. So I rewrote this scripts in a way that only captures the data I'm interested in.
 
-`python daily_metrics_generator.py out/` processes any newly downloaded logs and add them to [Feater](https://arrow.apache.org/docs/python/feather.html) file.
+`python daily_metrics_generator.py out/` processes any newly downloaded logs and add them to [Feather](https://arrow.apache.org/docs/python/feather.html) file.
 
 Then use `python daily_metrics_dashboard.py` to start a dashboard showing site usage.
 

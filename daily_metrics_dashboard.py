@@ -72,7 +72,7 @@ def update_request_graph(selected_days, data_type):
     else:
         data = df
 
-    
+
     gp = data.groupby([data['date'].dt.date])
 
     key_type = '_total_requests' if data_type == 'Requests' else '_unique_requests'
@@ -125,4 +125,4 @@ def open_browser():
 
 if __name__ == '__main__':
     Timer(1, open_browser).start()
-    app.run_server(host='0.0.0.0', port=8282, debug=True)
+    app.run(host='0.0.0.0', port=8282, debug=True)

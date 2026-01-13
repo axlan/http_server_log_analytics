@@ -1,0 +1,12 @@
+[project]
+name = "http_server_log_analytics"
+version = "0.1.0"
+requires-python = ">=3.8"
+dependencies = [
+    "ua-parser",
+    "pandas",
+    "dash",
+    "dash-bootstrap-components",
+    "pyarrow",
+    "boto3",
+]
