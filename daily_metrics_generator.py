@@ -21,7 +21,7 @@ MAX_LINE_LEN = 1024
 
 NUM_THREADS = 8
 
-FALLBACK_START_DATE = datetime(year=2023, month=1, day=1)
+FALLBACK_START_DATE = datetime(year=2026, month=3, day=1).date()
 
 
 @dataclass
@@ -83,6 +83,8 @@ def get_date(file: str) -> datetime.date:
 def extract_analytic_data(
     date: datetime, df: pd.DataFrame
 ) -> Dict[str, MetricsByDateAndPage]:
+    # Special rule for fatal_core_dump pages.
+    df.loc[df["cs-uri-stem"].str.contains("fatal_core_dump"), "cs-uri-stem"] = '/fatal_core_dump/'
     df = df[(df["cs-uri-stem"].str.endswith("/")) & (df["sc-status"] == 200)]
 
     data: Dict[str, MetricsByDateAndPage] = {}
@@ -176,7 +178,7 @@ def s3_generator(args):
         old_df.info()
         last_date = old_df["date"].max().date()
 
-    start_date = last_date + timedelta(days=1)
+    start_date = last_date - timedelta(days=1)
     print(f'Loading logs from {start_date} to {datetime.now().date()}')
 
     params = [(args, start_date + timedelta(days=i)) for i in range(NUM_THREADS)]
